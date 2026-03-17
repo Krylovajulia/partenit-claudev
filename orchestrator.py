@@ -132,15 +132,40 @@ def suggest_labels(summary: str, description: str) -> list[str]:
         cleaned = result.strip().removeprefix("```json").removesuffix("```").strip()
         labels = json.loads(cleaned)
         if isinstance(labels, list):
-            # Only allow labels from our taxonomy
-            valid_prefixes = ("service:", "lib:", "domain:")
-            return [
-                lbl for lbl in labels
-                if isinstance(lbl, str) and any(lbl.startswith(p) for p in valid_prefixes)
-            ][:5]
+            return [lbl for lbl in labels
+                    if isinstance(lbl, str) and lbl in _VALID_LABELS][:5]
     except (json.JSONDecodeError, TypeError):
         logger.warning("Failed to parse DeepSeek label suggestions")
     return []
+
+
+_VALID_LABELS = {
+    "service:constraint-solver",
+    "service:mode-controller",
+    "service:decision-log",
+    "service:world-simulator",
+    "service:skill-library",
+    "service:fleet-policy-hub",
+    "service:operator-ui",
+    "service:sim-dashboard",
+    "service:test-dashboard",
+    "service:robot-bridge",
+    "service:pipeline",
+    "lib:ontology",
+    "lib:rlm",
+    "lib:validator-math",
+    "lib:fleet-trust-metrics",
+    "lib:decision-math",
+    "domain:safety",
+    "domain:navigation",
+    "domain:perception",
+    "domain:robot-control",
+    "domain:fleet",
+    "domain:infra",
+    "domain:api",
+    "domain:testing",
+    "domain:docs",
+}
 
 
 def build_claude_prompt(issue: dict, classification: dict) -> str:
