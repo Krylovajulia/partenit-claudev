@@ -25,17 +25,16 @@ def _base_header(issue: dict) -> str:
         )
 
     desc_text = issue.get('description_text', '')
-    desc_section = ""
     if desc_text:
         desc_section = (
             "## Описание родительской задачи\n"
             f"{desc_text}\n\n"
         )
-    elif not desc_text:
+    else:
         desc_section = (
             "## Описание родительской задачи\n"
-            f"(Описание не заполнено. Ориентируйся на название задачи "
-            f"и контекст эпика выше.)\n\n"
+            "(Описание не заполнено. Ориентируйся на название задачи "
+            "и контекст эпика выше.)\n\n"
         )
 
     return (
@@ -49,74 +48,166 @@ def _base_header(issue: dict) -> str:
     )
 
 
-def _common_rules() -> str:
+# ── Mandatory reading + coding standards ──────────────────────────────────────
+
+def _pre_flight(stage: str, parent_key: str = "") -> str:
+    """Files to read BEFORE starting any work."""
+    base_files = (
+        "## Обязательное чтение перед началом работы\n\n"
+        "Прочитай эти файлы ПОЛНОСТЬЮ, прежде чем писать что-либо:\n\n"
+        "1. **CLAUDE.md** — правила проекта, абсолютные запреты, "
+        "порядок приоритетов\n"
+        "2. **ARCHITECTURE.md** — карта сервисов, портов, "
+        "библиотек, data flows\n"
+        "3. **STEERING.md** — инварианты, границы слоёв, "
+        "что НЕЛЬЗЯ нарушать\n"
+    )
+
+    if stage in ("architecture", "development", "testing"):
+        sa_file = f"SYSTEM_ANALYSIS_{parent_key}.md" if parent_key else "SYSTEM_ANALYSIS*.md"
+        base_files += (
+            f"4. **{sa_file}** — системный анализ этой задачи "
+            "(если есть в репо)\n"
+        )
+
+    if stage in ("development", "testing"):
+        ad_file = (f"ARCHITECTURE_DECISION_{parent_key}.md"
+                   if parent_key else "ARCHITECTURE_DECISION*.md")
+        base_files += (
+            f"5. **{ad_file}** — архитектурное решение этой задачи "
+            "(если есть в репо)\n"
+        )
+
+    return base_files + "\n"
+
+
+def _coding_standards() -> str:
+    """Coding standards that apply to ALL stages."""
     return (
-        "## Правила\n"
-        "1. Прочитай CLAUDE.md и ARCHITECTURE.md для контекста.\n"
-        "2. Минимальные изменения — только то, что нужно по задаче.\n"
-        "3. Если меняешь сервис — обнови ARCHITECTURE.md.\n"
-        "4. НЕ рефакторь «заодно». НЕ создавай git-коммиты.\n"
-        "5. Непонятно → оставь TODO с объяснением.\n"
+        "## Стандарты кода\n\n"
+        "### Архитектура\n"
+        "- **Не дублируй код.** Перед созданием новой функции/класса "
+        "проверь, нет ли уже подходящей в `libs/` или `services/`. "
+        "Используй `Grep` для поиска.\n"
+        "- **Не создавай новые абстракции** без необходимости. "
+        "Три одинаковые строки лучше, чем преждевременная абстракция.\n"
+        "- **Libs — чистый Python**, без HTTP внутри libs. "
+        "HTTP только в services.\n"
+        "- **Single-file сервисы** (~300-500 строк). Если больше — "
+        "split по ответственности.\n"
+        "- **Не смешивай слои** L1/L2a/L2b/L3. Каждый слой — "
+        "отдельный модуль.\n\n"
+        "### Стиль\n"
+        "- Python: `http.server.BaseHTTPRequestHandler` для новых "
+        "сервисов (если сервис уже не на FastAPI).\n"
+        "- Логирование: `logger = logging.getLogger('service_name')`, "
+        "НЕ print().\n"
+        "- Все сервисы: `GET /health` → JSON.\n"
+        "- sys.path.insert для libs: "
+        "`sys.path.insert(0, os.path.join(os.path.dirname(__file__), "
+        "'..', '..', 'libs'))`\n"
+        "- Типизация: type hints для публичных функций.\n"
+        "- Docstrings: только для неочевидной логики.\n\n"
+        "### Safety (нарушать НЕЛЬЗЯ)\n"
+        "- L1/L2a — только детерминированный код. Без ML, LLM, "
+        "network I/O.\n"
+        "- Safety бинарна: ALLOW / DENY. Никогда score-based.\n"
+        "- Ошибка → DENY / SAFE_FALLBACK. Fail-open запрещён.\n"
+        "- Каждый reject → ReasonCode + audit_ref.\n\n"
+        "### Что НЕ делать\n"
+        "- НЕ рефакторь код, который не относится к задаче.\n"
+        "- НЕ добавляй комментарии/docstrings к коду, который "
+        "не менял.\n"
+        "- НЕ добавляй error handling для невозможных сценариев.\n"
+        "- НЕ создавай утилитарные хелперы для одноразовых операций.\n"
+        "- НЕ добавляй feature flags или backwards-compatibility shims.\n"
+        "- НЕ создавай git-коммиты — это сделает pipeline.\n\n"
+    )
+
+
+def _post_flight() -> str:
+    """Checklist AFTER completing work."""
+    return (
+        "## После завершения работы\n\n"
+        "1. Если добавил/изменил/удалил сервис — **обнови "
+        "ARCHITECTURE.md** (секция 3 + секция 6).\n"
+        "2. Если добавил новый порт — проверь что не конфликтует "
+        "(см. ARCHITECTURE.md).\n"
+        "3. Если заметил tech debt — добавь в TECH_DEBT.md.\n"
+        "4. Убедись что `pytest tests/` проходит.\n"
+        "5. Непонятно → оставь TODO с объяснением, "
+        "не угадывай.\n\n"
     )
 
 
 # ── Stage: sys-analysis ────────────────────────────────────────────────────────
 
 def build_sys_analysis_prompt(issue: dict) -> str:
-    """Prompt for sys-analysis stage.
-
-    Output: SYSTEM_ANALYSIS.md in repo root (Claude Code writes the file,
-    pipeline reads it and posts to Jira as a comment).
-    """
     jira_domain = issue.get("jira_domain", "")
-    parent_url = f"https://{jira_domain}/browse/{issue['parent_key']}" if jira_domain else issue['parent_key']
-    subtask_url = f"https://{jira_domain}/browse/{issue['key']}" if jira_domain else issue['key']
+    parent_key = issue.get("parent_key", issue["key"])
+    parent_summary = issue.get("parent_summary", issue["summary"])
+    parent_url = (f"https://{jira_domain}/browse/{parent_key}"
+                  if jira_domain else parent_key)
+    subtask_url = (f"https://{jira_domain}/browse/{issue['key']}"
+                   if jira_domain else issue['key'])
 
     file_header = (
-        f"# Системный анализ: [{issue['parent_key']}]({parent_url}) — {issue['summary']}\n\n"
-        f"> **Jira:** [{issue['parent_key']}]({parent_url}) · "
+        f"# Системный анализ: [{parent_key}]({parent_url})"
+        f" — {parent_summary}\n\n"
+        f"> **Jira:** [{parent_key}]({parent_url}) · "
         f"Подзадача: [{issue['key']}]({subtask_url})  \n"
         f"> **Этап:** sys-analysis  \n"
-        f"> Сгенерировано автоматически Trust Layer Pipeline\n\n"
+        "> Сгенерировано автоматически Trust Layer Pipeline\n\n"
         "---\n\n"
     )
 
     return (
         _base_header(issue)
+        + _pre_flight("sys-analysis", parent_key)
         + "## Что нужно сделать: Системный анализ\n\n"
-        "Проведи системный анализ задачи и создай файл `SYSTEM_ANALYSIS.md` в корне репозитория.\n\n"
-        f"Файл ДОЛЖЕН начинаться ровно с этого заголовка (скопируй дословно):\n\n"
+        "Проведи системный анализ задачи. Прочитай код затронутых "
+        "компонентов, пойми текущее состояние, и создай файл "
+        f"`SYSTEM_ANALYSIS_{parent_key}.md` в корне репозитория.\n\n"
+        f"Файл ДОЛЖЕН начинаться ровно с этого заголовка "
+        f"(скопируй дословно):\n\n"
         f"```\n{file_header}```\n\n"
         "Затем добавь разделы:\n"
-        "1. **Краткое описание проблемы** — что именно требуется изменить/добавить\n"
-        "2. **Затронутые компоненты** — список сервисов/библиотек, которые нужно изменить\n"
-        "3. **Зависимости** — что ещё может быть затронуто (upstream/downstream)\n"
-        "4. **Риски** — потенциальные проблемы при реализации\n"
-        "5. **Граничные случаи** — нестандартные ситуации, которые нужно обработать\n"
-        "6. **Рекомендованный подход** — 2-3 предложения о том, как реализовать\n\n"
-        "Формат: markdown заголовки, списки, примеры кода где нужно.\n"
-        "Объём: 300-600 строк — подробно, но по делу.\n\n"
-        + _common_rules()
+        "1. **Краткое описание проблемы** — что именно требуется\n"
+        "2. **Текущее состояние кода** — как это работает сейчас "
+        "(прочитай реальный код, не угадывай!)\n"
+        "3. **Затронутые компоненты** — список сервисов/библиотек "
+        "с путями к файлам\n"
+        "4. **Зависимости** — upstream/downstream, кто вызывает, "
+        "кого вызывает\n"
+        "5. **Существующие утилиты** — что уже есть в libs/ и можно "
+        "переиспользовать (проверь через Grep!)\n"
+        "6. **Риски** — потенциальные проблемы при реализации\n"
+        "7. **Граничные случаи** — нестандартные ситуации\n"
+        "8. **Рекомендованный подход** — конкретные шаги реализации "
+        "с указанием файлов\n\n"
+        "Формат: markdown, списки, примеры кода где нужно.\n"
+        "Объём: 200-500 строк — подробно, но по делу.\n\n"
     ).strip()
 
 
 # ── Stage: architecture ────────────────────────────────────────────────────────
 
 def build_architecture_prompt(issue: dict, sys_analysis: str = "") -> str:
-    """Prompt for architecture stage.
-
-    Output: ARCHITECTURE_DECISION.md in repo root.
-    """
     jira_domain = issue.get("jira_domain", "")
-    parent_url = f"https://{jira_domain}/browse/{issue['parent_key']}" if jira_domain else issue['parent_key']
-    subtask_url = f"https://{jira_domain}/browse/{issue['key']}" if jira_domain else issue['key']
+    parent_key = issue.get("parent_key", issue["key"])
+    parent_summary = issue.get("parent_summary", issue["summary"])
+    parent_url = (f"https://{jira_domain}/browse/{parent_key}"
+                  if jira_domain else parent_key)
+    subtask_url = (f"https://{jira_domain}/browse/{issue['key']}"
+                   if jira_domain else issue['key'])
 
     file_header = (
-        f"# Архитектурное решение: [{issue['parent_key']}]({parent_url}) — {issue['summary']}\n\n"
-        f"> **Jira:** [{issue['parent_key']}]({parent_url}) · "
+        f"# Архитектурное решение: [{parent_key}]({parent_url})"
+        f" — {parent_summary}\n\n"
+        f"> **Jira:** [{parent_key}]({parent_url}) · "
         f"Подзадача: [{issue['key']}]({subtask_url})  \n"
         f"> **Этап:** architecture  \n"
-        f"> Сгенерировано автоматически Trust Layer Pipeline\n\n"
+        "> Сгенерировано автоматически Trust Layer Pipeline\n\n"
         "---\n\n"
     )
 
@@ -124,30 +215,39 @@ def build_architecture_prompt(issue: dict, sys_analysis: str = "") -> str:
     if sys_analysis:
         context_section = (
             "## Результат системного анализа (предыдущий этап)\n\n"
-            f"{sys_analysis[:3000]}\n\n"
+            f"{sys_analysis[:4000]}\n\n"
         )
 
     return (
         _base_header(issue)
+        + _pre_flight("architecture", parent_key)
         + context_section
         + "## Что нужно сделать: Архитектурное решение\n\n"
-        "Изучи системный анализ (если есть) и создай файл `ARCHITECTURE_DECISION.md` в корне репозитория.\n\n"
-        f"Файл ДОЛЖЕН начинаться ровно с этого заголовка (скопируй дословно):\n\n"
+        "Изучи системный анализ и текущий код. Создай файл "
+        f"`ARCHITECTURE_DECISION_{parent_key}.md` в корне репозитория.\n\n"
+        f"Файл ДОЛЖЕН начинаться ровно с этого заголовка "
+        f"(скопируй дословно):\n\n"
         f"```\n{file_header}```\n\n"
-        "Затем добавь разделы:\n"
         "Файл должен содержать:\n"
         "1. **Контекст** — кратко, почему мы делаем это изменение\n"
-        "2. **Решение** — конкретное архитектурное решение с обоснованием\n"
-        "3. **Альтернативы** — что рассматривалось и почему отклонено\n"
-        "4. **API контракт** — новые/изменённые эндпоинты, форматы данных\n"
-        "5. **Схема данных** — если меняются модели или хранилища\n"
-        "6. **Последовательность** — порядок реализации (что делать в dev-этапе)\n"
-        "7. **Метрики успеха** — как понять что задача выполнена\n\n"
-        "Важно: учитывай принципы Trust Layer из CLAUDE.md:\n"
-        "- L1/L2a должны остаться детерминированными и синхронными\n"
-        "- Все решения должны fail-closed\n"
-        "- Не смешивай слои L1, L2a, L2b, L3\n\n"
-        + _common_rules()
+        "2. **Решение** — конкретное архитектурное решение "
+        "с обоснованием. Укажи КАКИЕ ИМЕННО файлы менять и КАК.\n"
+        "3. **Переиспользование** — что из существующего кода "
+        "использовать (libs/, существующие хелперы). "
+        "Проверь через Grep!\n"
+        "4. **Альтернативы** — что рассматривалось и почему отклонено\n"
+        "5. **API контракт** — новые/изменённые эндпоинты, "
+        "форматы данных\n"
+        "6. **Схема данных** — если меняются модели или хранилища\n"
+        "7. **Последовательность** — порядок реализации "
+        "(что делать в dev-этапе, пошагово)\n"
+        "8. **Метрики успеха** — как понять что задача выполнена\n\n"
+        "Важно:\n"
+        "- Учитывай принципы Trust Layer из CLAUDE.md и STEERING.md\n"
+        "- L1/L2a — детерминированные, синхронные, fail-closed\n"
+        "- Не смешивай слои L1, L2a, L2b, L3\n"
+        "- Не дублируй существующую функциональность — "
+        "проверь libs/ перед тем как предлагать новый код\n\n"
     ).strip()
 
 
@@ -158,45 +258,57 @@ def build_development_prompt(
     sys_analysis: str = "",
     architecture: str = "",
 ) -> str:
-    """Prompt for development stage.
+    parent_key = issue.get("parent_key", issue["key"])
 
-    Output: code changes + PR to stage branch.
-    """
     context_parts = []
     if sys_analysis:
         context_parts.append(
-            "## Системный анализ\n\n" + sys_analysis[:2000]
+            "## Системный анализ (из предыдущего этапа)\n\n"
+            + sys_analysis[:3000]
         )
     if architecture:
         context_parts.append(
-            "## Архитектурное решение\n\n" + architecture[:2000]
+            "## Архитектурное решение (из предыдущего этапа)\n\n"
+            + architecture[:3000]
         )
-    context_section = ("\n\n".join(context_parts) + "\n\n") if context_parts else ""
+    context_section = (
+        ("\n\n".join(context_parts) + "\n\n") if context_parts else ""
+    )
 
     safety_warning = ""
     if issue.get("safety_relevant"):
         safety_warning = (
-            "## ⚠️ SAFETY-RELEVANT\n"
-            "Прочитай STEERING.md §4 перед работой. "
-            "L1/L2a — без ML, без network I/O. Fail-closed. audit_ref обязателен.\n\n"
+            "## SAFETY-RELEVANT\n"
+            "Прочитай STEERING.md перед работой. "
+            "L1/L2a — без ML, без network I/O. Fail-closed. "
+            "audit_ref обязателен.\n\n"
         )
 
     return (
         _base_header(issue)
+        + _pre_flight("development", parent_key)
         + safety_warning
         + context_section
+        + _coding_standards()
         + "## Что нужно сделать: Реализация\n\n"
-        "Реализуй задачу согласно архитектурному решению (если есть) или по описанию.\n\n"
-        "Алгоритм работы:\n"
-        f"1. Прочитай ARCHITECTURE_DECISION_{issue['parent_key']}.md и "
-        f"SYSTEM_ANALYSIS_{issue['parent_key']}.md (если есть в репо).\n"
-        "2. Найди файлы для изменения — не угадывай, читай код.\n"
-        "3. Реализуй минимальными изменениями — только то, что нужно.\n"
-        "4. Напиши тесты (pytest) для нового кода.\n"
-        "5. Убедись что `pytest tests/` проходит.\n"
-        "6. Обнови ARCHITECTURE.md если изменил/добавил сервис.\n\n"
-        "НЕ создавай git-коммиты и PR — это сделает pipeline.\n\n"
-        + _common_rules()
+        "Реализуй задачу СТРОГО по архитектурному решению. "
+        "Если архитектурного решения нет — ориентируйся на "
+        "системный анализ и описание задачи.\n\n"
+        "### Алгоритм работы\n"
+        f"1. Прочитай `ARCHITECTURE_DECISION_{parent_key}.md` и "
+        f"`SYSTEM_ANALYSIS_{parent_key}.md` (если есть в репо).\n"
+        "2. Прочитай ARCHITECTURE.md — найди связанные сервисы "
+        "и библиотеки.\n"
+        "3. **Найди существующий код** для переиспользования:\n"
+        "   - Grep по ключевым словам в `libs/`\n"
+        "   - Grep по похожим функциям в `services/`\n"
+        "   - НЕ СОЗДАВАЙ дубликаты!\n"
+        "4. Реализуй минимальными изменениями.\n"
+        "5. Напиши базовые тесты (pytest) для нового кода.\n"
+        "6. Запусти `pytest tests/ -x` и почини если падает.\n"
+        "7. Обнови ARCHITECTURE.md если добавил/изменил сервис "
+        "или эндпоинт.\n\n"
+        + _post_flight()
     ).strip()
 
 
@@ -207,36 +319,50 @@ def build_testing_prompt(
     sys_analysis: str = "",
     architecture: str = "",
 ) -> str:
-    """Prompt for testing stage.
+    parent_key = issue.get("parent_key", issue["key"])
 
-    Output: new/updated test files, no PR needed (pipeline pushes to dev branch).
-    """
     context_parts = []
     if sys_analysis:
-        context_parts.append("## Системный анализ\n\n" + sys_analysis[:1500])
+        context_parts.append(
+            "## Системный анализ\n\n" + sys_analysis[:2000]
+        )
     if architecture:
-        context_parts.append("## Архитектурное решение\n\n" + architecture[:1500])
-    context_section = ("\n\n".join(context_parts) + "\n\n") if context_parts else ""
+        context_parts.append(
+            "## Архитектурное решение\n\n" + architecture[:2000]
+        )
+    context_section = (
+        ("\n\n".join(context_parts) + "\n\n") if context_parts else ""
+    )
 
     return (
         _base_header(issue)
+        + _pre_flight("testing", parent_key)
         + context_section
         + "## Что нужно сделать: Тестирование\n\n"
         "Напиши исчерпывающие тесты для реализованных изменений.\n\n"
-        "Что должно быть покрыто:\n"
+        "### Перед написанием тестов\n"
+        "1. Прочитай код, который был изменён в рамках задачи "
+        f"(см. `ARCHITECTURE_DECISION_{parent_key}.md` → "
+        "секция «Последовательность»)\n"
+        "2. Посмотри существующие тесты в `tests/` — "
+        "используй те же паттерны и fixtures\n"
+        "3. Проверь `tests/conftest.py` — "
+        "какие fixtures уже есть\n\n"
+        "### Что должно быть покрыто\n"
         "1. **Happy path** — стандартное использование\n"
-        "2. **Edge cases** — граничные значения, пустые входы, максимальные значения\n"
-        "3. **Error cases** — некорректные входные данные, недоступные зависимости\n"
-        "4. **Safety invariants** — если задача safety-relevant: тесты на fail-closed поведение\n\n"
-        "Правила для тестов:\n"
-        "- Используй pytest\n"
-        "- НЕ мокируй реальные зависимости без необходимости (см. CLAUDE.md)\n"
-        "- Тесты должны быть детерминированными (нет time.sleep, нет random без seed)\n"
+        "2. **Edge cases** — граничные значения, пустые входы\n"
+        "3. **Error cases** — некорректные входные данные\n"
+        "4. **Safety invariants** — если safety-relevant: "
+        "тесты на fail-closed\n\n"
+        "### Правила для тестов\n"
+        "- pytest, НЕ unittest\n"
+        "- Детерминированные (нет time.sleep, нет random без seed)\n"
         "- Каждый тест проверяет одну вещь\n"
-        "- Имена тестов: `test_<что>_<когда>_<ожидаемый результат>`\n\n"
-        "Запусти `pytest tests/ -v` и убедись что всё зелёное.\n"
-        "НЕ создавай git-коммиты — это сделает pipeline.\n\n"
-        + _common_rules()
+        "- Имена: `test_<что>_<когда>_<ожидаемый результат>`\n"
+        "- Переиспользуй fixtures из conftest.py\n"
+        "- НЕ мокируй то, что можно протестировать напрямую\n\n"
+        "Запусти `pytest tests/ -v` и убедись что всё зелёное.\n\n"
+        + _post_flight()
     ).strip()
 
 
@@ -251,18 +377,24 @@ def build_stage_prompt(issue: dict, artifact_context: dict) -> str:
     if stage == "sys-analysis":
         return build_sys_analysis_prompt(issue)
     elif stage == "architecture":
-        return build_architecture_prompt(issue, sys_analysis=sys_analysis)
+        return build_architecture_prompt(
+            issue, sys_analysis=sys_analysis
+        )
     elif stage == "development":
         return build_development_prompt(
-            issue, sys_analysis=sys_analysis, architecture=architecture
+            issue, sys_analysis=sys_analysis,
+            architecture=architecture,
         )
     elif stage == "testing":
         return build_testing_prompt(
-            issue, sys_analysis=sys_analysis, architecture=architecture
+            issue, sys_analysis=sys_analysis,
+            architecture=architecture,
         )
     else:
-        # Fallback: generic prompt
         from orchestrator import build_claude_prompt
-        return build_claude_prompt(issue, {"type": "feature", "complexity": "medium",
-                                            "needs_tests": True, "safety_relevant": False,
-                                            "main_files": []})
+        return build_claude_prompt(
+            issue,
+            {"type": "feature", "complexity": "medium",
+             "needs_tests": True, "safety_relevant": False,
+             "main_files": []},
+        )
