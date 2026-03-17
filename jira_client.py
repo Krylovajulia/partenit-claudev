@@ -7,6 +7,36 @@ from config import JIRA_DOMAIN, JIRA_EMAIL, JIRA_API_TOKEN
 
 logger = logging.getLogger("pipeline.jira")
 
+# Bilingual mapping: accept both Russian and English status/transition names
+_STATUS_ALIASES: dict[str, list[str]] = {
+    "in progress":       ["в работе"],
+    "done":              ["готово"],
+    "to do":             ["к выполнению"],
+    "in review":         ["в процессе проверки"],
+    "cancelled":         ["отменено"],
+    "ready to merge":    ["на мерж"],
+    "in testing":        ["в тестировании"],
+    "ready for test":    ["готово к тестированию"],
+}
+# Build reverse mapping too (russian → english)
+_ALL_ALIASES: dict[str, str] = {}
+for _eng, _rus_list in _STATUS_ALIASES.items():
+    for _rus in _rus_list:
+        _ALL_ALIASES[_rus] = _eng
+        _ALL_ALIASES[_eng] = _eng  # identity
+
+
+def _status_matches(target: str, candidate: str) -> bool:
+    """Check if target and candidate refer to the same status (bilingual)."""
+    t = target.lower().strip()
+    c = candidate.lower().strip()
+    if t == c:
+        return True
+    # Check if they're aliases of each other
+    t_canonical = _ALL_ALIASES.get(t, t)
+    c_canonical = _ALL_ALIASES.get(c, c)
+    return t_canonical == c_canonical
+
 
 class JiraClient:
     def __init__(self) -> None:
@@ -49,10 +79,10 @@ class JiraClient:
         )
         r.raise_for_status()
         transitions = r.json().get("transitions", [])
-        # Match by target status name (robust across locales) or transition name
+        # Match by target status name or transition name (bilingual ru/en)
         for t in transitions:
             to_name = t.get("to", {}).get("name", "")
-            if to_name.lower() == target.lower() or t["name"].lower() == target.lower():
+            if _status_matches(target, to_name) or _status_matches(target, t["name"]):
                 httpx.post(
                     f"{self.base_url}/rest/api/3/issue/{key}/transitions",
                     headers=self.headers,

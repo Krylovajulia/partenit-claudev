@@ -271,7 +271,7 @@ def run_artifact_stage(job: dict) -> None:
     work_dir = f"/tmp/pipeline-work/{job_id}"
 
     try:
-        jira.transition(issue_key, "In Progress")
+        jira.transition(issue_key, STATUS_IN_PROGRESS)
         jira.add_comment(issue_key, f"🤖 Этап {stage} начат (Claude Code). Job: {job_id}")
         notify_stage_started(stage, issue_key, parent_key, job.get("jira_domain", ""))
 
@@ -367,7 +367,7 @@ def run_code_stage(job: dict) -> None:
     work_dir = f"/tmp/pipeline-work/{job_id}"
 
     try:
-        jira.transition(issue_key, "In Progress")
+        jira.transition(issue_key, STATUS_IN_PROGRESS)
         jira.add_comment(issue_key, f"🤖 Этап {stage} начат. Job: {job_id}")
         notify_stage_started(stage, issue_key, parent_key, job.get("jira_domain", ""))
 

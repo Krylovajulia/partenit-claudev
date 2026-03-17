@@ -23,6 +23,7 @@ from config import (
     STATUS_IN_PROGRESS,
     ALL_STAGES,
 )
+from jira_client import _status_matches
 
 logger = logging.getLogger("pipeline.deps")
 
@@ -67,7 +68,7 @@ def check_prerequisites_done(
             stage_status[s] = status
 
     for req in required:
-        if stage_status.get(req, "").lower() != STATUS_DONE.lower():
+        if not _status_matches(stage_status.get(req, ""), STATUS_DONE):
             logger.debug(
                 "[%s] prerequisite %s is '%s', not Done",
                 parent_key,
@@ -107,12 +108,13 @@ def trigger_next_stages(
             continue  # subtask for this stage doesn't exist
 
         # Only trigger if currently To Do (not already running/done)
-        if info["status"].lower() in (STATUS_IN_PROGRESS.lower(), STATUS_DONE.lower()):
+        if (_status_matches(info["status"], STATUS_IN_PROGRESS)
+                or _status_matches(info["status"], STATUS_DONE)):
             continue
 
         # Check ALL prerequisites are done (not just completed_stage)
         all_done = all(
-            stage_info.get(p, {}).get("status", "").lower() == STATUS_DONE.lower()
+            _status_matches(stage_info.get(p, {}).get("status", ""), STATUS_DONE)
             for p in prereqs
         )
         if not all_done:
@@ -143,7 +145,7 @@ def all_stages_done(parent_key: str, jira) -> bool:
     for stage in ALL_STAGES:
         if stage not in stage_status:
             return False  # subtask missing → not done
-        if stage_status[stage].lower() != STATUS_DONE.lower():
+        if not _status_matches(stage_status[stage], STATUS_DONE):
             return False
     return True
 
