@@ -221,17 +221,25 @@ def run_setup_job(job: dict) -> None:
         all_subtasks = jira.get_subtasks(issue_key)
         for sub in all_subtasks:
             stage = get_stage(sub["labels"])
-            if stage and not STAGE_PREREQUISITES.get(stage):
-                ok = jira.transition(sub["key"], STATUS_IN_PROGRESS)
-                if ok:
-                    logger.info("[%s] auto-started stage %s (%s)", issue_key, stage, sub["key"])
-                else:
-                    available = jira.get_transitions(sub["key"])
-                    msg = (f"⚠️ Не могу перевести {sub['key']} в '{STATUS_IN_PROGRESS}'.\n"
-                           f"Доступные переходы: {available}")
-                    logger.warning(msg)
-                    from telegram_notifier import _send
-                    _send(msg)
+            if not stage or STAGE_PREREQUISITES.get(stage):
+                continue
+            # Don't re-trigger subtasks that are already running or finished
+            sub_status = sub.get("status", "").lower()
+            if sub_status in ("in progress", "done", "in review",
+                              "в работе", "готово", "в процессе проверки"):
+                logger.info("[%s] stage %s (%s) already '%s', skipping auto-start",
+                            issue_key, stage, sub["key"], sub["status"])
+                continue
+            ok = jira.transition(sub["key"], STATUS_IN_PROGRESS)
+            if ok:
+                logger.info("[%s] auto-started stage %s (%s)", issue_key, stage, sub["key"])
+            else:
+                available = jira.get_transitions(sub["key"])
+                msg = (f"⚠️ Не могу перевести {sub['key']} в '{STATUS_IN_PROGRESS}'.\n"
+                       f"Доступные переходы: {available}")
+                logger.warning(msg)
+                from telegram_notifier import _send
+                _send(msg)
 
     except Exception as e:
         logger.error("[%s] setup FAIL: %s", issue_key, e)
