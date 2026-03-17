@@ -51,7 +51,42 @@ github = GitHubClient()
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _clone_repo(work_dir: str, branch_name: str) -> None:
+    """Clone repo and create a new local branch (no remote tracking)."""
     repo_url = f"https://x-access-token:{GITHUB_TOKEN_TRUST_LAYER}@github.com/{GITHUB_REPO}.git"
+    result = subprocess.run(
+        ["git", "clone", "--depth=1", repo_url, work_dir],
+        capture_output=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace").strip()
+        raise Exception(f"git clone failed (rc={result.returncode}): {stderr[:400]}")
+    subprocess.run(
+        ["git", "checkout", "-b", branch_name],
+        cwd=work_dir,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _clone_repo_with_branch(work_dir: str, branch_name: str) -> None:
+    """Clone repo; if branch_name exists on remote, check it out.
+    Otherwise create a new branch. This allows code stages to pick up
+    artifacts committed by earlier artifact stages."""
+    repo_url = (
+        f"https://x-access-token:{GITHUB_TOKEN_TRUST_LAYER}"
+        f"@github.com/{GITHUB_REPO}.git"
+    )
+    # Try cloning the existing branch first
+    result = subprocess.run(
+        ["git", "clone", "--depth=50", "-b", branch_name, repo_url, work_dir],
+        capture_output=True,
+        timeout=120,
+    )
+    if result.returncode == 0:
+        logger.info("Cloned existing branch %s", branch_name)
+        return
+    # Branch doesn't exist on remote — clone default and create it
     result = subprocess.run(
         ["git", "clone", "--depth=1", repo_url, work_dir],
         capture_output=True,
@@ -252,9 +287,32 @@ def run_setup_job(job: dict) -> None:
 # ── Artifact stage (sys-analysis, architecture) ───────────────────────────────
 
 _ARTIFACT_FILENAMES = {
-    "sys-analysis": "SYSTEM_ANALYSIS.md",
-    "architecture": "ARCHITECTURE_DECISION.md",
+    "sys-analysis": "SYSTEM_ANALYSIS",
+    "architecture": "ARCHITECTURE_DECISION",
 }
+
+
+def _artifact_filename(stage: str, parent_key: str) -> str:
+    """E.g. SYSTEM_ANALYSIS_AIDEV-38.md"""
+    base = _ARTIFACT_FILENAMES.get(stage, stage.upper())
+    return f"{base}_{parent_key}.md"
+
+
+def _ensure_description_text(job: dict) -> None:
+    """Convert ADF description to plain text if not already done."""
+    if not job.get("description_text") and job.get("description"):
+        from orchestrator import parse_adf_to_text
+        job["description_text"] = parse_adf_to_text(job["description"])
+    # If subtask has no description, fetch parent's description
+    if not job.get("description_text") and job.get("parent_key") != job.get("issue_key"):
+        try:
+            parent = jira.get_issue(job["parent_key"])
+            parent_desc = parent.get("fields", {}).get("description", {})
+            if parent_desc:
+                from orchestrator import parse_adf_to_text
+                job["description_text"] = parse_adf_to_text(parent_desc)
+        except Exception as e:
+            logger.warning("Failed to fetch parent description: %s", e)
 
 
 def run_artifact_stage(job: dict) -> None:
@@ -264,6 +322,7 @@ def run_artifact_stage(job: dict) -> None:
     ARCHITECTURE_DECISION.md. Pipeline reads the file, posts it to Jira,
     and marks the subtask Done.
     """
+    _ensure_description_text(job)
     issue_key = job["issue_key"]
     parent_key = job["parent_key"]
     stage = job["stage"]
@@ -300,18 +359,48 @@ def run_artifact_stage(job: dict) -> None:
                 f"Claude Code rc={result.returncode}: {result.stderr[:500]}"
             )
 
-        artifact_filename = _ARTIFACT_FILENAMES.get(stage, f"{stage.upper()}.md")
-        artifact_path = os.path.join(work_dir, artifact_filename)
+        artifact_fname = _artifact_filename(stage, parent_key)
+        # Claude writes the generic name; rename to task-specific
+        generic_fname = _ARTIFACT_FILENAMES.get(stage, stage.upper()) + ".md"
+        generic_path = os.path.join(work_dir, generic_fname)
+        artifact_path = os.path.join(work_dir, artifact_fname)
+        if os.path.exists(generic_path) and generic_fname != artifact_fname:
+            os.rename(generic_path, artifact_path)
         if os.path.exists(artifact_path):
             with open(artifact_path, encoding="utf-8") as fh:
                 artifact_text = fh.read()
         else:
             artifact_text = result.stdout.strip() or "Артефакт не создан — проверить вручную."
-            logger.warning("[%s] %s not found, using stdout", issue_key, artifact_filename)
+            logger.warning("[%s] %s not found, using stdout", issue_key, artifact_fname)
+            # Write stdout as artifact so it gets committed
+            if artifact_text and artifact_text != "Артефакт не создан — проверить вручную.":
+                with open(artifact_path, "w", encoding="utf-8") as fh:
+                    fh.write(artifact_text)
+
+        # Commit and push artifact to feature branch
+        branch_name = f"feature/{parent_key.lower()}"
+        try:
+            subprocess.run(["git", "checkout", "-B", branch_name], cwd=work_dir,
+                           check=True, capture_output=True)
+            subprocess.run(["git", "add", artifact_fname], cwd=work_dir,
+                           check=True, capture_output=True)
+            subprocess.run(
+                ["git", "commit", "-m",
+                 f"{parent_key}: {_STAGE_SUMMARIES.get(stage, stage)} [{stage}]\n\n"
+                 "Automated by Trust Layer Pipeline"],
+                cwd=work_dir, check=True, capture_output=True,
+            )
+            subprocess.run(
+                ["git", "push", "origin", branch_name],
+                cwd=work_dir, check=True, capture_output=True, timeout=60,
+            )
+            logger.info("[%s] pushed artifact %s to %s", issue_key, artifact_fname, branch_name)
+        except Exception as e:
+            logger.warning("[%s] failed to push artifact: %s", issue_key, e)
 
         jira_domain = job.get("jira_domain", "")
         parent_url = f"https://{jira_domain}/browse/{parent_key}"
-        github_url = f"https://github.com/{GITHUB_REPO}/blob/main/{artifact_filename}"
+        github_url = f"https://github.com/{GITHUB_REPO}/blob/{branch_name}/{artifact_fname}"
 
         jira.add_comment(
             issue_key,
@@ -322,7 +411,7 @@ def run_artifact_stage(job: dict) -> None:
         jira.add_comment(
             parent_key,
             f"✅ Этап **{stage}** завершён (Claude Code).\n"
-            f"📄 [{artifact_filename}]({github_url})\n"
+            f"📄 [{artifact_fname}]({github_url})\n"
             f"⏱ {duration // 60}м {duration % 60}с",
         )
 
@@ -360,6 +449,7 @@ def run_code_stage(job: dict) -> None:
     Claude Code writes actual code. Pipeline creates a PR (development)
     or pushes to dev branch (testing) and transitions to In Review / Done.
     """
+    _ensure_description_text(job)
     issue_key = job["issue_key"]
     parent_key = job["parent_key"]
     stage = job["stage"]
@@ -381,10 +471,11 @@ def run_code_stage(job: dict) -> None:
         artifact_context = collect_artifact_context(parent_key, jira)
         prompt = build_stage_prompt(job, artifact_context)
 
-        branch_name = f"feature/{issue_key.lower()}"
-        logger.info("[%s] Cloning for code stage %s", issue_key, stage)
+        branch_name = f"feature/{parent_key.lower()}"
+        logger.info("[%s] Cloning for code stage %s (branch %s)",
+                    issue_key, stage, branch_name)
         os.makedirs(work_dir, exist_ok=True)
-        _clone_repo(work_dir, branch_name)
+        _clone_repo_with_branch(work_dir, branch_name)
 
         start = time.time()
         if job.get("cancelled"):
