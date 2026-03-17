@@ -10,9 +10,14 @@ set -e
 if [ -n "$CLAUDE_AUTH_JSON" ]; then
     echo "[entrypoint] Restoring ~/.claude/.credentials.json..."
     mkdir -p /root/.claude
-    echo "$CLAUDE_AUTH_JSON" | base64 -d > /root/.claude/.credentials.json
-    chmod 600 /root/.claude/.credentials.json
-    echo "[entrypoint] Done."
+    # Strip surrounding quotes if Railway stored the value with them
+    CLEAN_JSON=$(echo "$CLAUDE_AUTH_JSON" | tr -d '"'"'" )
+    if echo "$CLEAN_JSON" | base64 -d > /root/.claude/.credentials.json 2>/dev/null; then
+        chmod 600 /root/.claude/.credentials.json
+        echo "[entrypoint] Credentials restored."
+    else
+        echo "[entrypoint] WARNING: CLAUDE_AUTH_JSON decode failed, continuing without credentials."
+    fi
 fi
 
 # ── Start pipeline ────────────────────────────────────────────────────────────
