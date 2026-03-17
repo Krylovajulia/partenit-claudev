@@ -6,8 +6,12 @@ import logging
 
 from orchestrator import analyze_result, suggest_labels
 from telegram_notifier import (
+    notify_pipeline_started,
+    notify_subtasks_created,
+    notify_stage_started,
     notify_artifact_done,
     notify_pr_created,
+    notify_testing_done,
     notify_all_done,
     notify_merged,
     notify_error,
@@ -108,6 +112,9 @@ def run_setup_job(job: dict) -> None:
     job_id = job["job_id"]
 
     try:
+        jira_domain = job.get("jira_domain", "")
+        notify_pipeline_started(issue_key, job["summary"], jira_domain)
+
         # Auto-tag parent with domain/service labels
         description_text = job.get("description_text", "")
         auto_labels = suggest_labels(job["summary"], description_text)
@@ -140,6 +147,10 @@ def run_setup_job(job: dict) -> None:
             )
             created[stage] = subtask_key
             logger.info("[%s] created subtask %s for stage %s", issue_key, subtask_key, stage)
+
+        if created:
+            notify_subtasks_created(issue_key, list(created.values()),
+                                    auto_labels or [], jira_domain)
 
         jira.add_comment(
             issue_key,
@@ -192,6 +203,7 @@ def run_artifact_stage(job: dict) -> None:
     try:
         jira.transition(issue_key, "In Progress")
         jira.add_comment(issue_key, f"🤖 Этап {stage} начат (Claude Code). Job: {job_id}")
+        notify_stage_started(stage, issue_key, parent_key, job.get("jira_domain", ""))
 
         auto_labels = suggest_labels(job["summary"], job.get("description_text", ""))
         if auto_labels:
@@ -285,6 +297,7 @@ def run_code_stage(job: dict) -> None:
     try:
         jira.transition(issue_key, "In Progress")
         jira.add_comment(issue_key, f"🤖 Этап {stage} начат. Job: {job_id}")
+        notify_stage_started(stage, issue_key, parent_key, job.get("jira_domain", ""))
 
         # Auto-tag issue and parent with domain/service labels
         auto_labels = suggest_labels(job["summary"], job.get("description_text", ""))
@@ -387,6 +400,7 @@ def run_code_stage(job: dict) -> None:
                 f"Время: {duration // 60}м {duration % 60}с\n"
                 f"{analysis.get('summary_ru', '')}",
             )
+            notify_testing_done(issue_key, parent_key, job.get("jira_domain", ""), duration)
             logger.info("[%s] Testing stage done (%ds)", issue_key, duration)
 
         if all_stages_done(parent_key, jira):
@@ -428,7 +442,6 @@ def run_merge_job(job: dict) -> None:
     then transitions Jira task to Done.
     """
     issue_key = job["issue_key"]
-    job_id = job["job_id"]
     jira_domain = job.get("jira_domain", "")
 
     try:

@@ -24,6 +24,43 @@ def _send(text: str) -> None:
         logger.warning("Telegram send failed: %s", e)
 
 
+def notify_pipeline_started(parent_key: str, summary: str, jira_domain: str) -> None:
+    url = f"https://{jira_domain}/browse/{parent_key}"
+    _send(
+        f"🚦 <b>Пайплайн запущен</b>\n"
+        f"Задача: <a href='{url}'>{parent_key}</a>\n"
+        f"{summary}"
+    )
+
+
+def notify_subtasks_created(parent_key: str, subtask_keys: list[str],
+                             labels: list[str], jira_domain: str) -> None:
+    url = f"https://{jira_domain}/browse/{parent_key}"
+    keys_str = " · ".join(subtask_keys)
+    labels_str = " ".join(f"#{l}" for l in labels) if labels else "—"
+    _send(
+        f"📋 <b>Подзадачи созданы</b>\n"
+        f"Задача: <a href='{url}'>{parent_key}</a>\n"
+        f"Подзадачи: {keys_str}\n"
+        f"Лейблы: {labels_str}"
+    )
+
+
+def notify_stage_started(stage: str, issue_key: str, parent_key: str,
+                          jira_domain: str) -> None:
+    emoji = {"sys-analysis": "📊", "architecture": "🏗",
+             "development": "💻", "testing": "🧪"}.get(stage, "⚙️")
+    name = {"sys-analysis": "Системный анализ", "architecture": "Архитектура",
+            "development": "Разработка", "testing": "Тестирование"}.get(stage, stage)
+    url = f"https://{jira_domain}/browse/{issue_key}"
+    _send(
+        f"{emoji} <b>{name} — начат</b>\n"
+        f"Задача: <a href='https://{jira_domain}/browse/{parent_key}'>{parent_key}</a>\n"
+        f"Подзадача: <a href='{url}'>{issue_key}</a>\n"
+        f"Claude Code работает..."
+    )
+
+
 def notify_artifact_done(stage: str, issue_key: str, parent_key: str,
                          jira_domain: str, duration_s: int) -> None:
     emoji = "📊" if stage == "sys-analysis" else "🏗"
@@ -46,11 +83,23 @@ def notify_pr_created(issue_key: str, parent_key: str, pr_url: str,
     )
 
 
+def notify_testing_done(issue_key: str, parent_key: str,
+                        jira_domain: str, duration_s: int) -> None:
+    url = f"https://{jira_domain}/browse/{issue_key}"
+    _send(
+        f"🧪 <b>Тесты написаны</b>\n"
+        f"Задача: <a href='https://{jira_domain}/browse/{parent_key}'>{parent_key}</a>\n"
+        f"Подзадача: <a href='{url}'>{issue_key}</a>\n"
+        f"⏱ {duration_s // 60}м {duration_s % 60}с"
+    )
+
+
 def notify_all_done(parent_key: str, jira_domain: str) -> None:
     _send(
         f"✅ <b>Готово к ревью!</b>\n"
         f"<a href='https://{jira_domain}/browse/{parent_key}'>{parent_key}</a>\n"
-        f"Все этапы завершены: анализ → архитектура → код → тесты"
+        f"Все этапы завершены: анализ → архитектура → код → тесты\n"
+        f"Посмотри PR и двигай задачу в <b>Ready to Merge</b>"
     )
 
 
