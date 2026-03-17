@@ -4,7 +4,7 @@ import subprocess
 import time
 import logging
 
-from orchestrator import analyze_result, suggest_labels, run_deepseek_artifact
+from orchestrator import analyze_result, suggest_labels
 from jira_client import JiraClient
 from github_client import GitHubClient
 from dependency_tracker import (
@@ -169,19 +169,21 @@ _ARTIFACT_FILENAMES = {
 
 
 def run_artifact_stage(job: dict) -> None:
-    """Run sys-analysis or architecture stage via DeepSeek (no git clone).
+    """Run sys-analysis or architecture via Claude Code (git clone + claude CLI).
 
-    DeepSeek generates the markdown artifact directly from the Jira description.
-    Result is posted as a Jira comment so dependency_tracker can collect it.
+    Claude Code reads the codebase and writes SYSTEM_ANALYSIS.md or
+    ARCHITECTURE_DECISION.md. Pipeline reads the file, posts it to Jira,
+    and marks the subtask Done.
     """
     issue_key = job["issue_key"]
     parent_key = job["parent_key"]
     stage = job["stage"]
     job_id = job["job_id"]
+    work_dir = f"/tmp/pipeline-work/{job_id}"
 
     try:
         jira.transition(issue_key, "In Progress")
-        jira.add_comment(issue_key, f"🤖 Этап {stage} начат (DeepSeek). Job: {job_id}")
+        jira.add_comment(issue_key, f"🤖 Этап {stage} начат (Claude Code). Job: {job_id}")
 
         auto_labels = suggest_labels(job["summary"], job.get("description_text", ""))
         if auto_labels:
@@ -190,16 +192,34 @@ def run_artifact_stage(job: dict) -> None:
                 jira.add_labels(parent_key, auto_labels)
 
         artifact_context = collect_artifact_context(parent_key, jira)
+        prompt = build_stage_prompt(job, artifact_context)
+
+        logger.info("[%s] Cloning for artifact stage %s", issue_key, stage)
+        os.makedirs(work_dir, exist_ok=True)
+        _clone_repo(work_dir, f"analysis/{issue_key.lower()}")
 
         start = time.time()
-        logger.info("[%s] DeepSeek: generating %s artifact", issue_key, stage)
-        artifact_text = run_deepseek_artifact(stage, job, artifact_context)
+        logger.info("[%s] Claude Code: running stage %s", issue_key, stage)
+        result = _run_claude(prompt, work_dir)
         duration = int(time.time() - start)
-        logger.info("[%s] DeepSeek done: %ds, %d chars", issue_key, duration, len(artifact_text))
+
+        if result.returncode != 0:
+            raise Exception(
+                f"Claude Code rc={result.returncode}: {result.stderr[:500]}"
+            )
 
         artifact_filename = _ARTIFACT_FILENAMES.get(stage, f"{stage.upper()}.md")
+        artifact_path = os.path.join(work_dir, artifact_filename)
+        if os.path.exists(artifact_path):
+            with open(artifact_path, encoding="utf-8") as fh:
+                artifact_text = fh.read()
+        else:
+            artifact_text = result.stdout.strip() or "Артефакт не создан — проверить вручную."
+            logger.warning("[%s] %s not found, using stdout", issue_key, artifact_filename)
+
         jira_domain = job.get("jira_domain", "")
         parent_url = f"https://{jira_domain}/browse/{parent_key}"
+        github_url = f"https://github.com/{GITHUB_REPO}/blob/main/{artifact_filename}"
 
         jira.add_comment(
             issue_key,
@@ -207,11 +227,10 @@ def run_artifact_stage(job: dict) -> None:
             f"## Результат этапа: {stage}\n\n{artifact_text[:24000]}\n\n"
             f"---\n⏱ {duration // 60}м {duration % 60}с | Job: {job_id}",
         )
-
         jira.add_comment(
             parent_key,
-            f"✅ Этап **{stage}** завершён (DeepSeek).\n"
-            f"📄 Артефакт: {artifact_filename}\n"
+            f"✅ Этап **{stage}** завершён (Claude Code).\n"
+            f"📄 [{artifact_filename}]({github_url})\n"
             f"⏱ {duration // 60}м {duration % 60}с",
         )
 
@@ -234,6 +253,8 @@ def run_artifact_stage(job: dict) -> None:
             )
         except Exception:
             pass
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 # ── Code stage (development, testing) ─────────────────────────────────────────
