@@ -71,6 +71,36 @@ class JiraClient:
         r.raise_for_status()
         return True
 
+    def get_subtask_issue_type(self, project_key: str) -> str:
+        """Return the best issue type name for creating child tasks in this project.
+
+        Classic projects have a dedicated Sub-task type (subtask=True).
+        Next-gen (team-managed) projects use regular Task with a parent link.
+        """
+        r = httpx.get(
+            f"{self.base_url}/rest/api/3/project/{project_key}",
+            headers=self.headers,
+            timeout=10,
+        )
+        r.raise_for_status()
+        issue_types = r.json().get("issueTypes", [])
+        logger.info("Project %s issue types: %s", project_key,
+                    [it["name"] for it in issue_types])
+        # Classic project: dedicated sub-task type
+        for it in issue_types:
+            if it.get("subtask") is True:
+                logger.info("Using sub-task issue type: %s", it["name"])
+                return it["name"]
+        # Next-gen project: use Task (supports parent link)
+        for it in issue_types:
+            if it["name"].lower() in ("task", "задача"):
+                return it["name"]
+        # Last resort: first non-Epic type
+        for it in issue_types:
+            if it["name"].lower() != "epic":
+                return it["name"]
+        return "Task"
+
     def create_subtask(
         self,
         parent_key: str,
@@ -79,12 +109,13 @@ class JiraClient:
         project_key: str,
     ) -> str:
         """Create a sub-task under parent_key. Returns the new issue key."""
+        issuetype_name = self.get_subtask_issue_type(project_key)
         body = {
             "fields": {
                 "project": {"key": project_key},
                 "parent": {"key": parent_key},
                 "summary": summary,
-                "issuetype": {"name": "Sub-task"},
+                "issuetype": {"name": issuetype_name},
                 "labels": labels,
             }
         }
