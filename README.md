@@ -21,6 +21,8 @@
 
 Move a Jira task to **In Progress** and the pipeline takes over: creates subtasks, runs system analysis and architecture design via Claude Code, writes code, writes tests, and opens a PR. When you approve and move to **Ready to Merge** — it merges automatically.
 
+> **Step-by-step setup guide with screenshots:** [How to deploy Claudev — full walkthrough on LinkedIn](https://www.linkedin.com/article/edit/7439970570697543684/)
+
 ---
 
 ## How it works
