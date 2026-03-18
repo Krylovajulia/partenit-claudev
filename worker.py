@@ -369,6 +369,26 @@ def run_plan_job(job: dict) -> None:
             raise Exception("Claude Code did not output valid JSON")
 
         plan = json.loads(output[json_start:json_end])
+
+        # Check if business analysis rejected the feature
+        if plan.get("rejected"):
+            reason = plan.get("reason", "No reason provided.")
+            jira.add_comment(
+                issue_key,
+                f"🤖 **Feature rejected after business analysis.**\n\n"
+                f"{reason}\n\n"
+                f"No epics or tasks were created.\n"
+                f"⏱ {duration // 60}m {duration % 60}s | Job: {job_id}",
+            )
+            jira.transition(issue_key, STATUS_DONE)
+            _send(
+                f"🚫 <b>Feature rejected</b>\n"
+                f"<a href='https://{jira_domain}/browse/{issue_key}'>{issue_key}</a>\n"
+                f"{reason[:200]}"
+            )
+            logger.info("[%s] Plan rejected: %s", issue_key, reason[:200])
+            return
+
         epics = plan.get("epics", [])
 
         if not epics:
