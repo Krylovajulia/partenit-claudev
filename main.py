@@ -383,16 +383,26 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
         "created": time.time(),
     }
 
-    # 5. Pipeline-level concurrency: only for parent (setup) tasks
+    # 5. Pipeline-level concurrency
+    # Setup + artifact stages (sys-analysis, architecture) always run immediately.
+    # Only code stages (development, testing) are blocked by MAX_CONCURRENT_PIPELINES.
+    # This way queued tasks arrive at development with artifacts already done.
+    from config import ARTIFACT_STAGES, CODE_STAGES
+
+    is_code_stage = is_subtask and stage in CODE_STAGES
+
     if not is_subtask and stage is None and status_name == TRIGGER_STATUS:
+        # Parent setup task — always register and run (creates subtasks)
+        with lock:
+            active_pipelines.add(issue_key)
+    elif is_code_stage and parent_key not in active_pipelines:
+        # Code stage for a pipeline not in active set — check concurrency
         with lock:
             if len(active_pipelines) >= MAX_CONCURRENT_PIPELINES:
-                # Queue it — will start when current pipeline finishes
                 pipeline_queue.append(job)
                 jobs[job_id] = job
-                logger.info("Pipeline %s queued (position %d), active: %s",
+                logger.info("Code stage %s queued (position %d), active: %s",
                             issue_key, len(pipeline_queue), list(active_pipelines))
-                # Notify user via Jira comment
                 try:
                     from jira_client import JiraClient
                     jira = JiraClient()
@@ -413,13 +423,10 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
                     "active_pipelines": list(active_pipelines),
                 }
             else:
-                active_pipelines.add(issue_key)
+                active_pipelines.add(parent_key)
 
-    # Subtask jobs: check that parent pipeline is active
-    # (prevents orphan subtask processing)
+    # Subtask jobs: ensure parent is tracked
     if is_subtask and parent_key not in active_pipelines:
-        # Parent isn't in active pipelines — register it
-        # (handles restart/redeploy where state was lost)
         with lock:
             active_pipelines.add(parent_key)
 
