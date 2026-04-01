@@ -2,11 +2,11 @@ FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
 
-# Node.js + Claude Code CLI
+# Node.js + Gemini CLI
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @google/gemini-cli
 
 # Git config for automated commits
 RUN git config --global user.name "Claudev" && \
