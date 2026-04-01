@@ -373,7 +373,7 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
         "stage": stage,
         "trigger": status_name,
         "jira_domain": f"{JIRA_DOMAIN}.atlassian.net",
-        "priority": fields.get("priority", {}).get("name", "Medium"),
+        "priority": (fields.get("priority") or {}).get("name", "Medium"),
         "labels": labels,
         "components": [
             c.get("name", "") if isinstance(c, dict) else c
