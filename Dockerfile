@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @google/gemini-cli
+RUN npm install -g @google/gemini-cli && mkdir -p /root/.gemini
 
 # Git config for automated commits
 RUN git config --global user.name "Claudev" && \
