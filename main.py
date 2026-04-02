@@ -271,7 +271,7 @@ async def webhook_jira(request: Request, secret: str = "") -> Dict[str, Any]:
         logger.info("Webhook cancel: %s → cancelled jobs: %s", issue_key, cancelled)
         return {"cancelled": True, "issue_key": issue_key, "jobs": cancelled}
 
-    ALLOWED_TYPES = ("Task", "Bug", "Story", "Sub-task",
+    ALLOWED_TYPES = ("Task", "Bug", "Story", "Sub-task", "Subtask",
                      "Задача", "Баг", "История", "Подзадача")
     if issue_type not in ALLOWED_TYPES:
         return {"skipped": True, "reason": f"type={issue_type}"}
