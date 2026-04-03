@@ -156,16 +156,62 @@ _RETRYABLE_MARKERS = (
 _RATE_LIMIT_MARKERS = ("rate limit", "429", "overloaded", "exceeded your current quota")
 
 
+def _read_repo_context(work_dir: str, max_chars: int = 40000) -> str:
+    """Read key files from repo to provide context to LLM."""
+    context_parts = []
+    total = 0
+    priority = ["README.md", "CLAUDE.md", "requirements.txt", "package.json", "setup.py", "pyproject.toml"]
+    for fname in priority:
+        fpath = os.path.join(work_dir, fname)
+        if os.path.exists(fpath) and total < max_chars:
+            try:
+                content = open(fpath, encoding="utf-8", errors="replace").read()[:5000]
+                context_parts.append(f"### {fname}\n```\n{content}\n```")
+                total += len(content)
+            except Exception:
+                pass
+    for root, dirs, files in os.walk(work_dir):
+        dirs[:] = [d for d in dirs if d not in {".git", "node_modules", "__pycache__", ".venv", "venv"}]
+        for fname in sorted(files):
+            if total >= max_chars:
+                break
+            if not fname.endswith((".py", ".js", ".ts", ".go", ".java", ".rs", ".md", ".yaml", ".yml")):
+                continue
+            fpath = os.path.join(root, fname)
+            rel = os.path.relpath(fpath, work_dir)
+            if any(p in rel for p in priority):
+                continue
+            try:
+                content = open(fpath, encoding="utf-8", errors="replace").read()[:3000]
+                context_parts.append(f"### {rel}\n```\n{content}\n```")
+                total += len(content)
+            except Exception:
+                pass
+    return "\n\n".join(context_parts) or "Empty repository"
+
+
 def _run_claude(prompt: str, work_dir: str, job: dict) -> subprocess.CompletedProcess:
-    """Run Gemini CLI via Popen; stores process in job["process"] for cancellation."""
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-    proc = subprocess.Popen(
-        ["gemini", "-p", prompt, "--model", model],
-        cwd=work_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
+    """Call DeepSeek API directly for code/artifact generation."""
+    import httpx
+    from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+
+    repo_context = _read_repo_context(work_dir)
+    full_prompt = f"{prompt}\n\n## Repository Files\n{repo_context}"
+
+    response = httpx.post(
+        f"{LLM_BASE_URL}/v1/chat/completions",
+        headers={"Authorization": f"Bearer {LLM_API_KEY}"},
+        json={
+            "model": LLM_MODEL,
+            "messages": [{"role": "user", "content": full_prompt}],
+            "max_tokens": 8000,
+            "temperature": 0.3,
+        },
+        timeout=300,
     )
+    response.raise_for_status()
+    output = response.json()["choices"][0]["message"]["content"]
+    return subprocess.CompletedProcess(args=["deepseek"], returncode=0, stdout=output, stderr="")
     job["process"] = proc
     try:
         stdout, stderr = proc.communicate(timeout=JOB_TIMEOUT_MINUTES * 60)
