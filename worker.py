@@ -158,8 +158,9 @@ _RATE_LIMIT_MARKERS = ("rate limit", "429", "overloaded", "exceeded your current
 
 def _run_claude(prompt: str, work_dir: str, job: dict) -> subprocess.CompletedProcess:
     """Run Gemini CLI via Popen; stores process in job["process"] for cancellation."""
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
     proc = subprocess.Popen(
-        ["gemini", "-p", prompt],
+        ["gemini", "-p", prompt, "--model", model],
         cwd=work_dir,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
